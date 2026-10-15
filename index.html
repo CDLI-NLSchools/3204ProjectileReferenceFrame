@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Projectile Motion & Reference Frames</title>
+<style>
+  body {
+    margin: 0;
+    padding: 24px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f8fafc;
+    color: #1e293b;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  h2 { 
+    margin: 0 0 16px 0; 
+    font-weight: 700;
+  }
+
+  /* Stage & Overlay Container */
+  .stage-wrapper {
+    position: relative;
+    background: #ffffff;
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    overflow: hidden;
+    border: 1px solid #e2e8f0;
+  }
+  canvas { display: block; }
+
+  /* Subscript-enabled HUD overlay */
+  .hud-overlay {
+    position: absolute;
+    top: 14px;
+    left: 18px;
+    background: rgba(255, 255, 255, 0.88);
+    backdrop-filter: blur(4px);
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: #334155;
+    pointer-events: none;
+  }
+  .hud-overlay strong { color: #0f172a; }
+  .hud-overlay i { font-family: "Times New Roman", serif; font-style: italic; }
+
+  /* Prominent Perspective Switcher */
+  .perspective-section {
+    margin-top: 18px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .perspective-label {
+    font-size: 14px;
+    font-weight: 600;
+    color: #475569;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .segmented-control {
+    display: inline-flex;
+    background: #e2e8f0;
+    padding: 4px;
+    border-radius: 10px;
+  }
+  .segmented-control button {
+    background: transparent;
+    border: none;
+    padding: 9px 18px;
+    border-radius: 7px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #64748b;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .segmented-control button.active {
+    background: #0f172a;
+    color: #ffffff;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  }
+
+  /* Playback & Step Controls */
+  .playback-controls {
+    margin-top: 14px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+  }
+  .btn-action {
+    background: #3b82f6;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  .btn-action:hover { background: #2563eb; }
+  .btn-reset { background: #64748b; }
+  .btn-reset:hover { background: #475569; }
+
+  /* Checkbox Options */
+  .options-row {
+    margin-top: 12px;
+    display: flex;
+    gap: 20px;
+    font-size: 13.5px;
+    color: #475569;
+  }
+  .options-row label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    user-select: none;
+  }
+</style>
+</head>
+<body>
+
+<h2>Projectile Motion & Reference Frames</h2>
+
+<div class="stage-wrapper">
+  <canvas id="simCanvas" width="900" height="420"></canvas>
+  <div class="hud-overlay" id="hudOverlay">
+    <div>Frame: <strong id="hudFrame">Ground Observer (Stationary)</strong></div>
+    <div>Time: <strong id="hudTime">0.00 s</strong> / <span id="hudTotalTime">2.86 s</span></div>
+    <div>Cart Speed (<i>v</i><sub>H</sub>): <strong>7.0 m/s</strong></div>
+    <div>Initial Vertical Speed (<i>v</i><sub>V1</sub>): <strong>14.0 m/s</strong></div>
+  </div>
+</div>
+
+<!-- Prominent Perspective Selector -->
+<div class="perspective-section">
+  <span class="perspective-label">Perspective:</span>
+  <div class="segmented-control">
+    <button id="btnViewGround" class="active">
+      <span>🌍 Ground View (Sidewalk Spectator)</span>
+    </button>
+    <button id="btnViewCart">
+      <span>🚃 Rail Car View (Thrower on Flatbed)</span>
+    </button>
+  </div>
+</div>
+
+<!-- Playback Controls -->
+<div class="playback-controls">
+  <button id="btnPlay" class="btn-action">▶ Play</button>
+  <button id="btnStepBack" class="btn-action">⏮ Step Back</button>
+  <button id="btnStepFwd" class="btn-action">Step Forward ⏭</button>
+  <button id="btnReset" class="btn-action btn-reset">↺ Reset</button>
+</div>
+
+<div class="options-row">
+  <label><input type="checkbox" id="chkGhosts" checked> Ghost Snapshots</label>
+  <label><input type="checkbox" id="chkPath" checked> Trajectory Path</label>
+  <label><input type="checkbox" id="chkVectors"> Velocity Vectors</label>
+</div>
+
+<script>
+const canvas = document.getElementById('simCanvas');
+const ctx = canvas.getContext('2d');
+
+// Physics & Scale Parameters
+const g = 9.8;                 // m/s^2
+const v_H = 7.0;               // m/s horizontal speed
+const v_V1 = 14.0;             // m/s initial launch speed
+const totalTime = (2 * v_V1) / g; 
+const ghostInterval = 0.25;    // Strobe interval in physics seconds
+
+// Half-speed configuration (0.5x slow-motion)
+const speedMultiplier = 0.5;   // runs at 50% normal real-time speed
+const dt = 0.02 * speedMultiplier; 
+
+const scale = 25;              // pixels per meter
+const groundY = 340;           
+const cartWidth = 140;
+const cartHeight = 28;
+const personHeight = 45;
+
+let t = 0;
+let isPlaying = false;
+let frameMode = 'ground';       // 'ground' or 'cart'
+let ghostSnapshots = [];
+
+// DOM References
+const hudFrame = document.getElementById('hudFrame');
+const hudTime = document.getElementById('hudTime');
+const hudTotalTime = document.getElementById('hudTotalTime');
+const btnPlay = document.getElementById('btnPlay');
+const btnViewGround = document.getElementById('btnViewGround');
+const btnViewCart = document.getElementById('btnViewCart');
+
+hudTotalTime.textContent = `${totalTime.toFixed(2)} s`;
+
+function getState(timeSec) {
+  const cartX = 100 + (v_H * timeSec) * scale;
+  const throwerHandX = cartX;
+  const throwerHandY = groundY - cartHeight - personHeight * 0.75;
+  
+  const ballX = throwerHandX;
+  const ballY = throwerHandY - (v_V1 * timeSec - 0.5 * g * timeSec * timeSec) * scale;
+
+  const v_V = -(v_V1 - g * timeSec); // canvas Y is downward
+
+  return { cartX, throwerHandX, throwerHandY, ballX, ballY, v_H, v_V, timeSec };
+}
+
+function recordGhost(timeSec) {
+  if (!ghostSnapshots.some(s => Math.abs(s.timeSec - timeSec) < 0.01)) {
+    ghostSnapshots.push(getState(timeSec));
+  }
+}
+
+function drawTrack() {
+  ctx.strokeStyle = '#94a3b8';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(0, groundY);
+  ctx.lineTo(canvas.width, groundY);
+  ctx.stroke();
+
+  // Rail ties
+  ctx.strokeStyle = '#cbd5e1';
+  ctx.lineWidth = 1.5;
+  for (let x = 10; x < canvas.width; x += 30) {
+    ctx.beginPath();
+    ctx.moveTo(x, groundY);
+    ctx.lineTo(x - 8, groundY + 12);
+    ctx.stroke();
+  }
+}
+
+function drawCart(x, y, alpha = 1.0) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  const wheelRadius = 10;
+  ctx.fillStyle = '#475569';
+  ctx.beginPath();
+  ctx.arc(x - cartWidth/2 + 25, y - wheelRadius, wheelRadius, 0, Math.PI * 2);
+  ctx.arc(x + cartWidth/2 - 25, y - wheelRadius, wheelRadius, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#cbd5e1';
+  ctx.strokeStyle = '#334155';
+  ctx.lineWidth = 2;
+  ctx.fillRect(x - cartWidth / 2, y - cartHeight - 2 * wheelRadius + 6, cartWidth, cartHeight);
+  ctx.strokeRect(x - cartWidth / 2, y - cartHeight - 2 * wheelRadius + 6, cartWidth, cartHeight);
+
+  ctx.restore();
+}
+
+function drawThrower(handX, handY, alpha = 1.0) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = 2.5;
+
+  const footY = groundY - cartHeight - 12;
+  const hipY = footY - 20;
+  const shoulderY = hipY - 22;
+  const headY = shoulderY - 12;
+
+  ctx.beginPath();
+  ctx.moveTo(handX - 10, footY);
+  ctx.lineTo(handX, hipY);
+  ctx.lineTo(handX + 10, footY);
+  ctx.moveTo(handX, hipY);
+  ctx.lineTo(handX, shoulderY);
+  ctx.moveTo(handX, shoulderY + 4);
+  ctx.lineTo(handX, handY);
+  ctx.stroke();
+
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(handX, headY, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawBall(bx, by, alpha = 1.0) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = '#ef4444';
+  ctx.strokeStyle = '#991b1b';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(bx, by, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Vector drawing with subscript support on canvas
+function drawSubscriptVector(startX, startY, vx, vy, baseText, subText, color) {
+  const lenScale = 3.5;
+  const endX = startX + vx * lenScale;
+  const endY = startY + vy * lenScale;
+
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = 2;
+
+  ctx.beginPath();
+  ctx.moveTo(startX, startY);
+  ctx.lineTo(endX, endY);
+  ctx.stroke();
+
+  const angle = Math.atan2(endY - startY, endX - startX);
+  ctx.beginPath();
+  ctx.moveTo(endX, endY);
+  ctx.lineTo(endX - 8 * Math.cos(angle - Math.PI / 6), endY - 8 * Math.sin(angle - Math.PI / 6));
+  ctx.lineTo(endX - 8 * Math.cos(angle + Math.PI / 6), endY - 8 * Math.sin(angle + Math.PI / 6));
+  ctx.fill();
+
+  // Subscripted label
+  ctx.font = 'italic 13px "Times New Roman", serif';
+  const labelX = endX + 6;
+  const labelY = endY - 4;
+  ctx.fillText(baseText, labelX, labelY);
+  ctx.font = '9px "Times New Roman", serif';
+  ctx.fillText(subText, labelX + 7, labelY + 3);
+
+  ctx.restore();
+}
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const curState = getState(t);
+  const xOffset = frameMode === 'cart' ? (canvas.width / 2 - curState.cartX) : 0;
+
+  ctx.save();
+  ctx.translate(xOffset, 0);
+
+  drawTrack();
+
+  // Trajectory Path
+  if (document.getElementById('chkPath').checked) {
+    ctx.strokeStyle = frameMode === 'ground' ? 'rgba(59, 130, 246, 0.45)' : 'rgba(16, 185, 129, 0.55)';
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    const steps = 100;
+    for (let i = 0; i <= steps; i++) {
+      const simT = (i / steps) * t;
+      const s = getState(simT);
+      const px = frameMode === 'ground' ? s.ballX : curState.cartX;
+      if (i === 0) ctx.moveTo(px, s.ballY);
+      else ctx.lineTo(px, s.ballY);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Ghost Snapshots
+  if (document.getElementById('chkGhosts').checked) {
+    ghostSnapshots.forEach(snap => {
+      if (snap.timeSec <= t) {
+        const ghostX = frameMode === 'ground' ? snap.cartX : curState.cartX;
+        drawCart(ghostX, groundY, 0.22);
+        drawThrower(ghostX, snap.throwerHandY, 0.22);
+        drawBall(ghostX, snap.ballY, 0.35);
+      }
+    });
+  }
+
+  // Active Objects
+  drawCart(curState.cartX, groundY, 1.0);
+  drawThrower(curState.throwerHandX, curState.throwerHandY, 1.0);
+  drawBall(curState.ballX, curState.ballY, 1.0);
+
+  // Velocity Vectors with subscript notation
+  if (document.getElementById('chkVectors').checked) {
+    const vxEff = frameMode === 'ground' ? curState.v_H : 0;
+    if (Math.abs(vxEff) > 0.1) {
+      drawSubscriptVector(curState.ballX, curState.ballY, vxEff, 0, 'v', 'H', '#2563eb');
+    }
+    drawSubscriptVector(curState.ballX, curState.ballY, 0, curState.v_V, 'v', 'V', '#16a34a');
+  }
+
+  ctx.restore();
+
+  // Update HUD
+  hudTime.textContent = `${t.toFixed(2)} s`;
+}
+
+function update() {
+  if (isPlaying) {
+    t += dt;
+    if (t >= totalTime) {
+      t = totalTime;
+      isPlaying = false;
+      btnPlay.textContent = '▶ Play';
+    }
+    
+    const lastGhostTime = ghostSnapshots.length > 0 ? ghostSnapshots[ghostSnapshots.length - 1].timeSec : -1;
+    if (t - lastGhostTime >= ghostInterval) {
+      recordGhost(t);
+    }
+  }
+  render();
+  requestAnimationFrame(update);
+}
+
+// Initial setup
+recordGhost(0);
+render();
+requestAnimationFrame(update);
+
+// Play / Step / Reset Handlers
+btnPlay.addEventListener('click', () => {
+  if (t >= totalTime) {
+    t = 0;
+    ghostSnapshots = [];
+    recordGhost(0);
+  }
+  isPlaying = !isPlaying;
+  btnPlay.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
+});
+
+document.getElementById('btnReset').addEventListener('click', () => {
+  isPlaying = false;
+  t = 0;
+  ghostSnapshots = [];
+  recordGhost(0);
+  btnPlay.textContent = '▶ Play';
+});
+
+document.getElementById('btnStepFwd').addEventListener('click', () => {
+  isPlaying = false;
+  btnPlay.textContent = '▶ Play';
+  t = Math.min(totalTime, t + ghostInterval);
+  recordGhost(t);
+});
+
+document.getElementById('btnStepBack').addEventListener('click', () => {
+  isPlaying = false;
+  btnPlay.textContent = '▶ Play';
+  t = Math.max(0, t - ghostInterval);
+  ghostSnapshots = ghostSnapshots.filter(s => s.timeSec <= t + 0.01);
+});
+
+// Prominent Frame Toggle Handlers
+function setPerspective(mode) {
+  frameMode = mode;
+  if (mode === 'ground') {
+    btnViewGround.classList.add('active');
+    btnViewCart.classList.remove('active');
+    hudFrame.textContent = 'Ground Observer (Stationary)';
+  } else {
+    btnViewCart.classList.add('active');
+    btnViewGround.classList.remove('active');
+    hudFrame.textContent = 'Rail Car Observer (Moving Frame)';
+  }
+  render();
+}
+
+btnViewGround.addEventListener('click', () => setPerspective('ground'));
+btnViewCart.addEventListener('click', () => setPerspective('cart'));
+
+['chkGhosts', 'chkPath', 'chkVectors'].forEach(id => {
+  document.getElementById(id).addEventListener('change', render);
+});
+</script>
+</body>
+</html>
